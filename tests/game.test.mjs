@@ -6,6 +6,7 @@ import {
   scoreRound, selectTrump, winningPlay,
 } from '../src/game/engine.ts';
 import { chooseBid, chooseCard, chooseTrump } from '../src/game/bot.ts';
+import { PLAYBACK, CARD_WIDTH, cardOverlap, handRows, trickDelay } from '../src/ui/playback.ts';
 
 function seeded(seed = 12345) {
   let state = seed >>> 0;
@@ -145,4 +146,35 @@ test('200 gerçek 13-lövelik otomatik dağıtım hatasız biter', () => {
   }
   assert.equal(current.phase, 'matchEnd');
   assert.equal(current.results.length, 200);
+});
+
+test('el görünümü: büyük eller tam olarak iki satıra bölünür', () => {
+  const deck = makeDeck();
+  for (let count = 0; count <= 13; count++) {
+    const rows = handRows(deck.slice(0, count), 390);
+    assert.deepEqual(rows.flat().map(c => c.id), deck.slice(0, count).map(c => c.id));
+    if (count >= 8) {
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].length - rows[1].length <= 1);
+    }
+    if (count <= 7 && count > 0) assert.equal(rows.length, 1);
+  }
+  assert.equal(handRows(deck.slice(0, 7), 330).length, 2);
+});
+test('kart aralıkları farklı ekran genişliklerinde okunabilir kalır', () => {
+  for (const width of [320, 350, 375, 390, 430]) {
+    const rows = handRows(makeDeck().slice(0, 13), width);
+    for (const row of rows) {
+      const overlap = cardOverlap(row.length, width);
+      assert.ok(overlap >= 0 && overlap <= CARD_WIDTH - 30);
+      assert.ok(row.length * CARD_WIDTH - (row.length - 1) * overlap <= Math.max(220, width - 28) + 1);
+    }
+  }
+});
+test('doğal hız: kart gelişi, gösterim, toplama ayrı aşamalardır', () => {
+  assert.ok(PLAYBACK.natural.flight < PLAYBACK.natural.botThink);
+  assert.ok(trickDelay('natural', 'revealing') > PLAYBACK.natural.flight);
+  assert.ok(trickDelay('natural', 'collecting') >= 250);
+  assert.ok(trickDelay('natural', 'revealing') > trickDelay('fast', 'revealing'));
+  assert.ok(trickDelay('fast', 'revealing') > trickDelay('veryFast', 'revealing'));
 });
