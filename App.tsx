@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Modal, Pressable, ScrollView, StatusBar, StyleSheet,
   Text, View,
@@ -15,6 +15,7 @@ import { chooseBid, chooseCard, chooseTrump } from './src/game/bot';
 import CardView from './src/ui/CardView';
 import GameTable from './src/ui/GameTable';
 import { palette, PLAYER_NAMES, SUIT_MARK, SUIT_TR } from './src/ui/theme';
+import { PLAYBACK, trickDelay, type GameSpeed, type TrickPresentation } from './src/ui/playback';
 
 const GAME_KEY = 'batak.match.v1';
 const SETTINGS_KEY = 'batak.settings.v1';
@@ -22,12 +23,12 @@ type Difficulty = 'easy' | 'normal' | 'hard';
 type Settings = {
   difficulty: Difficulty;
   rounds: number;
-  fastBots: boolean;
+  speed: GameSpeed;
   rules: Rules;
 };
 type Page = 'home' | 'game' | 'settings' | 'rules';
 const DEFAULT_SETTINGS: Settings = {
-  difficulty: 'normal', rounds: 5, fastBots: false,
+  difficulty: 'normal', rounds: 5, speed: 'natural',
   rules: { ...DEFAULT_RULES },
 };
 
@@ -50,7 +51,8 @@ function safeSettings(raw: string | null): Settings {
     return {
       difficulty: object.difficulty as Difficulty,
       rounds: object.rounds!,
-      fastBots: !!object.fastBots,
+      // Eski kayıtlardaki fastBots tercihini kaybetmeden yeni hız seçeneklerine taşı.
+      speed: ['natural', 'fast', 'veryFast'].includes(String(object.speed)) ? object.speed as GameSpeed : (('fastBots' in object && object.fastBots) ? 'fast' : 'natural'),
       rules: {
         ...DEFAULT_RULES,
         mustOvertake: !!object.rules.mustOvertake,
@@ -116,6 +118,18 @@ function Sheet({
     </Modal>
   );
 }
+function ChoicePanel({
+  title, subtitle, children,
+}: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <View style={[styles.sheet, styles.choicePanel]}>
+      <Text style={[styles.sheetMark, styles.choiceMark]}>✦  BATÂK  ✦</Text>
+      <Text style={[styles.sheetTitle, styles.choiceTitle]}>{title}</Text>
+      {subtitle && <Text style={[styles.sheetSubtitle, styles.choiceSubtitle]}>{subtitle}</Text>}
+      {children}
+    </View>
+  );
+}
 function HomeScreen({ game, start, resume, goSettings, goRules }: {
   game: Game | null; start: () => void; resume: () => void;
   goSettings: () => void; goRules: () => void;
@@ -170,8 +184,11 @@ function SettingsScreen({ settings, save, back }: { settings: Settings; save: (v
         value={settings.rules.mustOvertake ? 'on' : 'off'} onChange={(v: string) => changeRule('mustOvertake', v === 'on')} />
       <OptionRow label="KOZ KIRILMADAN KOZ AÇMA" options={[{ label: 'YASAK', value: 'on' }, { label: 'SERBEST', value: 'off' }]}
         value={settings.rules.trumpMustBeBroken ? 'on' : 'off'} onChange={(v: string) => changeRule('trumpMustBeBroken', v === 'on')} />
-      <OptionRow label="BİLGİSAYAR HAMLE HIZI" options={[{ label: 'NORMAL', value: 'normal' }, { label: 'HIZLI', value: 'fast' }]}
-        value={settings.fastBots ? 'fast' : 'normal'} onChange={(v: string) => save({ ...settings, fastBots: v === 'fast' })} />
+      <OptionRow label="OYUNUN AKIŞ HIZI" options={[
+        { label: 'DOĞAL', value: 'natural' },
+        { label: 'HIZLI', value: 'fast' },
+        { label: 'ÇOK HIZLI', value: 'veryFast' },
+      ]} value={settings.speed} onChange={(v: GameSpeed) => save({ ...settings, speed: v })} />
       <View style={styles.settingNote}><Text style={styles.settingNoteText}>Varsayılan: İhale 5–13; herkes pas geçerse ilk ihaleci mecburi 4 alır. Puanlar alınan löve ×10; batan ihaleci ve sıfır çeken savunan −ihale ×10 alır.</Text></View>
       <ActionButton primary label="MASAYA DÖN  →" onPress={back} />
     </ScrollView>
@@ -234,6 +251,9 @@ function AppInner() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [hydrated, setHydrated] = useState(false);
   const [lastOpen, setLastOpen] = useState(false);
+  const [presentation, setPresentation] = useState<TrickPresentation | null>(null);
+  const gameRef = useRef<Game | null>(null);
+  const presentationRef = useRef<TrickPresentation | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -243,7 +263,7 @@ function AppInner() {
         if (saved) {
           try {
             const parsed: unknown = JSON.parse(saved);
-            if (isValidSavedGame(parsed)) setGame(parsed);
+            if (isValidSavedGame(parsed)) { gameRef.current = parsed; setGame(parsed); }
           } catch { /* Eski/bozuk kayıt varsa güvenli yeni başlangıç. */ }
         }
         setSettings(safeSettings(options));
@@ -252,6 +272,8 @@ function AppInner() {
       .finally(() => { if (mounted) setHydrated(true); });
     return () => { mounted = false; };
   }, []);
+  useEffect(() => { gameRef.current = game; }, [game]);
+  useEffect(() => { presentationRef.current = presentation; }, [presentation]);
   useEffect(() => {
     if (hydrated && game) {
       AsyncStorage.setItem(GAME_KEY, JSON.stringify(game)).catch(() => undefined);
@@ -261,51 +283,85 @@ function AppInner() {
     if (!hydrated) return;
     AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)).catch(() => undefined);
   }, [settings, hydrated]);
+  // Dördüncü kart masada kalır, kazanan gösterilir, sonra kartlar toplanır.
+  // Oyun durumu anında hesaplanır; botlar ve insan bu sunum bitene kadar bekler.
   useEffect(() => {
-    if (page !== 'game' || !game || game.turn === 0 ||
-        !['bidding', 'trump', 'playing'].includes(game.phase)) return;
+    if (!presentation) return;
+    const stage = presentation.stage;
     const timer = setTimeout(() => {
-      setGame(current => {
-        if (!current || current.turn === 0 || !['bidding', 'trump', 'playing'].includes(current.phase)) return current;
-        const seat = current.turn;
-        const view = botObservation(current, seat);
-        try {
-          if (current.phase === 'bidding') return placeBid(current, seat, chooseBid(view, settings.difficulty));
-          if (current.phase === 'trump') return selectTrump(current, seat, chooseTrump(view));
-          return playCard(current, seat, chooseCard(view, settings.difficulty));
-        } catch (error) {
-          // Güvenli düşüş: yalnızca kurallar motorunun döndürdüğü yasal eylemler.
-          if (current.phase === 'bidding') return placeBid(current, seat, null);
-          if (current.phase === 'trump') return selectTrump(current, seat, SUITS[0]);
-          const fallback = legalCards(current, seat)[0];
-          return fallback ? playCard(current, seat, fallback.id) : current;
-        }
-      });
-    }, settings.fastBots ? 65 : 340);
+      const next = stage === 'revealing' ? { ...presentation, stage: 'collecting' as const } : null;
+      presentationRef.current = next;
+      setPresentation(next);
+    }, trickDelay(settings.speed, stage));
     return () => clearTimeout(timer);
-  }, [game, page, settings.fastBots, settings.difficulty]);
-
+  }, [presentation, settings.speed]);
+  useEffect(() => {
+    if (page !== 'game' || !game || presentation || game.turn === 0 ||
+        !['bidding', 'trump', 'playing'].includes(game.phase)) return;
+    const delay = PLAYBACK[settings.speed].botThink +
+      (settings.speed === 'natural' ? (game.currentTrick.length * 53 + game.turn * 29) % 140 : 0);
+    const timer = setTimeout(() => {
+      const current = gameRef.current;
+      if (!current || presentationRef.current || current.turn === 0 ||
+          !['bidding', 'trump', 'playing'].includes(current.phase)) return;
+      const seat = current.turn;
+      const view = botObservation(current, seat);
+      try {
+        if (current.phase === 'bidding') action(g => placeBid(g, seat, chooseBid(view, settings.difficulty)));
+        else if (current.phase === 'trump') action(g => selectTrump(g, seat, chooseTrump(view)));
+        else action(g => playCard(g, seat, chooseCard(view, settings.difficulty)));
+      } catch {
+        // Bot zorlanırsa bile sadece oyun çekirdeğinin izin verdiği hamle yapılır.
+        if (current.phase === 'bidding') action(g => placeBid(g, seat, null));
+        else if (current.phase === 'trump') action(g => selectTrump(g, seat, SUITS[0]));
+        else {
+          const fallback = legalCards(current, seat)[0];
+          if (fallback) action(g => playCard(g, seat, fallback.id));
+        }
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [game, page, presentation, settings.speed, settings.difficulty]);
+  const startNewMatch = () => {
+    const created = newGame(secureRandomIndex, settings.rounds, settings.rules);
+    gameRef.current = created;
+    presentationRef.current = null;
+    setPresentation(null);
+    setGame(created);
+    setPage('game');
+  };
   const begin = () => {
     if (game && game.phase !== 'matchEnd') {
       Alert.alert('Yeni maç', 'Devam eden maçın üzerine yeni bir maç başlatılsın mı?', [
         { text: 'Vazgeç', style: 'cancel' },
-        { text: 'Yeni maç', style: 'destructive', onPress: () => { setGame(newGame(secureRandomIndex, settings.rounds, settings.rules)); setPage('game'); } },
+        { text: 'Yeni maç', style: 'destructive', onPress: startNewMatch },
       ]);
       return;
     }
-    setGame(newGame(secureRandomIndex, settings.rounds, settings.rules));
-    setPage('game');
+    startNewMatch();
   };
   const action = (fn: (current: Game) => Game) => {
-    setGame(current => {
-      if (!current) return current;
-      try { return fn(current); }
-      catch (error) {
-        // Kullanıcı geçersiz karta bastığında uygulamayı çökertmeyiz.
-        console.warn('Batak işlem engellendi:', error);
-        return current;
+    const current = gameRef.current;
+    if (!current || presentationRef.current) return;
+    try {
+      const next = fn(current);
+      // React durum güncellemesi yapılmadan tekrar dokunulmasını önler.
+      gameRef.current = next;
+      if (current.phase === 'playing' &&
+          next.completedTricks.length > current.completedTricks.length) {
+        const trick = next.completedTricks[next.completedTricks.length - 1];
+        const staged: TrickPresentation = {
+          cards: trick,
+          winner: winningPlay(trick, next.trump!).seat,
+          stage: 'revealing',
+        };
+        presentationRef.current = staged;
+        setPresentation(staged);
       }
-    });
+      setGame(next);
+    } catch (error) {
+      console.warn('Batak işlem engellendi:', error);
+    }
   };
   const bidOptions = useMemo(() => {
     if (!game || game.phase !== 'bidding') return [];
@@ -321,37 +377,44 @@ function AppInner() {
       {page === 'settings' && <SettingsScreen settings={settings} save={setSettings} back={() => setPage('home')} />}
       {page === 'rules' && <RulesScreen back={() => setPage('home')} />}
       {page === 'game' && game && (
-        <GameTable game={game} onHome={() => setPage('home')} onLastTrick={() => setLastOpen(true)}
-          onCard={cardId => action(current => playCard(current, 0, cardId))} />
+        <GameTable
+          game={game}
+          speed={settings.speed}
+          presentation={presentation}
+          onHome={() => setPage('home')}
+          onLastTrick={() => setLastOpen(true)}
+          onCard={cardId => action(current => playCard(current, 0, cardId))}
+          selection={game.phase === 'bidding' && game.turn === 0 ? (
+            <ChoicePanel title="SÖZ SENDE" subtitle={'İhaleyi alabilmek için en az ' + (bidOptions[0] ?? '—') + ' demelisin.'}>
+              <View style={styles.bidGrid}>
+                {bidOptions.map(value => (
+                  <Pressable key={value} onPress={() => action(current => placeBid(current, 0, value))} style={styles.bidNumber}>
+                    <Text style={styles.bidNumberText}>{value}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <ActionButton outline label="PAS GEÇ" onPress={() => action(current => placeBid(current, 0, null))} />
+            </ChoicePanel>
+          ) : game.phase === 'trump' && game.turn === 0 ? (
+            <ChoicePanel title="KOZUNU SEÇ" subtitle={'İhale senin: ' + game.highestBid + ' löve. Hangi renkle oynayacaksın?'}>
+              <View style={styles.suitGrid}>
+                {SUITS.map(suit => (
+                  <Pressable key={suit} style={styles.suitButton} onPress={() => action(current => selectTrump(current, 0, suit))}>
+                    <Text style={[styles.suitIcon, (suit === 'hearts' || suit === 'diamonds') && { color: palette.red }]}>{SUIT_MARK[suit]}</Text>
+                    <Text style={styles.suitName}>{SUIT_TR[suit]}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ChoicePanel>
+          ) : null}
+        />
       )}
-      <Sheet visible={page === 'game' && game?.phase === 'bidding' && game.turn === 0}
-        title="SÖZ SENDE" subtitle={'İhaleyi alabilmek için en az ' + (bidOptions[0] ?? '—') + ' demelisin.'}>
-        <View style={styles.bidGrid}>
-          {bidOptions.map(value => (
-            <Pressable key={value} onPress={() => action(current => placeBid(current, 0, value))} style={styles.bidNumber}>
-              <Text style={styles.bidNumberText}>{value}</Text>
-            </Pressable>
-          ))}
-        </View>
-        <ActionButton outline label="PAS GEÇ" onPress={() => action(current => placeBid(current, 0, null))} />
-      </Sheet>
-      <Sheet visible={page === 'game' && game?.phase === 'trump' && game.turn === 0}
-        title="KOZUNU SEÇ" subtitle={'İhale senin: ' + (game?.highestBid ?? '') + ' löve. Hangi renkle oynayacaksın?'}>
-        <View style={styles.suitGrid}>
-          {SUITS.map(suit => (
-            <Pressable key={suit} style={styles.suitButton} onPress={() => action(current => selectTrump(current, 0, suit))}>
-              <Text style={[styles.suitIcon, (suit === 'hearts' || suit === 'diamonds') && { color: palette.red }]}>{SUIT_MARK[suit]}</Text>
-              <Text style={styles.suitName}>{SUIT_TR[suit]}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </Sheet>
-      <Sheet visible={page === 'game' && (game?.phase === 'roundEnd' || game?.phase === 'matchEnd')}
+      <Sheet visible={page === 'game' && !presentation && (game?.phase === 'roundEnd' || game?.phase === 'matchEnd')}
         title={game?.phase === 'matchEnd' ? 'MAÇ TAMAMLANDI' : 'DAĞITIM BİTTİ'}
         subtitle={game?.phase === 'matchEnd' ? 'Masada son sözü puanlar söyler.' : '13 löve tamamlandı. İşte sonuçlar.'}>
         {game && ['roundEnd', 'matchEnd'].includes(game.phase) && <ResultContent game={game}
           goNext={() => action(current => nextRound(current, secureRandomIndex))}
-          playAgain={() => { setGame(newGame(secureRandomIndex, settings.rounds, settings.rules)); setPage('game'); }}
+          playAgain={startNewMatch}
           goHome={() => setPage('home')} />}
       </Sheet>
       <Modal visible={page === 'game' && lastOpen} transparent animationType="fade" onRequestClose={() => setLastOpen(false)}>
@@ -431,16 +494,20 @@ const styles = StyleSheet.create({
   ruleCopy: { color: palette.ivory, fontSize: 12, lineHeight: 21, marginTop: 8 },
   modalShade: { flex: 1, backgroundColor: palette.overlay, padding: 18, justifyContent: 'center' },
   sheet: { backgroundColor: '#12372F', borderRadius: 24, borderWidth: 1, borderColor: palette.goldDim, padding: 20, maxHeight: '88%' },
+  choicePanel: { padding: 12, borderRadius: 18, maxHeight: '100%' },
+  choiceMark: { fontSize: 9 },
+  choiceTitle: { fontSize: 21, marginTop: 4 },
+  choiceSubtitle: { fontSize: 11, marginTop: 4, marginBottom: 7 },
   sheetMark: { color: palette.gold, fontSize: 10, fontWeight: '900', textAlign: 'center', letterSpacing: 2 },
   sheetTitle: { color: palette.ivory, fontSize: 25, textAlign: 'center', fontWeight: '900', marginTop: 8 },
   sheetSubtitle: { color: palette.mist, fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 6, marginBottom: 15 },
-  bidGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginBottom: 16, marginTop: 10 },
-  bidNumber: { width: 62, height: 56, justifyContent: 'center', alignItems: 'center', borderRadius: 12, backgroundColor: '#214D43', borderWidth: 1, borderColor: '#668170' },
-  bidNumberText: { color: palette.ivory, fontSize: 24, fontWeight: '900' },
-  suitGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, marginVertical: 16 },
-  suitButton: { width: '47%', paddingVertical: 20, alignItems: 'center', borderRadius: 14, backgroundColor: palette.ivory, borderWidth: 2, borderColor: palette.gold },
-  suitIcon: { color: palette.ink, fontSize: 45 },
-  suitName: { color: palette.ink, fontSize: 13, fontWeight: '900', marginTop: 4 },
+  bidGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginBottom: 9, marginTop: 5 },
+  bidNumber: { width: 53, height: 46, justifyContent: 'center', alignItems: 'center', borderRadius: 12, backgroundColor: '#214D43', borderWidth: 1, borderColor: '#668170' },
+  bidNumberText: { color: palette.ivory, fontSize: 21, fontWeight: '900' },
+  suitGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, marginVertical: 8 },
+  suitButton: { width: '47%', paddingVertical: 8, alignItems: 'center', borderRadius: 14, backgroundColor: palette.ivory, borderWidth: 2, borderColor: palette.gold },
+  suitIcon: { color: palette.ink, fontSize: 33 },
+  suitName: { color: palette.ink, fontSize: 12, fontWeight: '900', marginTop: 4 },
   resultInfo: { alignItems: 'center', marginVertical: 12 },
   resultLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
   resultValue: { color: palette.gold, fontSize: 16, fontWeight: '800', marginTop: 5 },
