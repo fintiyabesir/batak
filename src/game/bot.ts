@@ -41,7 +41,9 @@ export function chooseTrump(observation: BotObservation): Suit {
 }
 export function chooseBid(observation: BotObservation, difficulty: 'easy' | 'normal' | 'hard' = 'normal'): number | null {
   const trump = chooseTrump(observation);
-  const expected = strength(observation.hand, trump);
+  // Deste kontrolü / açılış temposunun getirdiği yaklaşık ek löveler.
+  // Eşikler ileride eşlenik dağıtımlarla kalibre edilecek.
+  const expected = strength(observation.hand, trump) + 1.35;
   const safety = difficulty === 'hard' ? 0.50 : difficulty === 'normal' ? 0.75 : 1.05;
   const highestSafe = Math.min(13, Math.floor(expected - safety));
   const minimum = Math.max(observation.rules.minBid, observation.highestBid + 1);
@@ -58,7 +60,17 @@ function unseenHigher(observation: BotObservation, card: Card): number {
   }
   return higher;
 }
-function evaluatePlay(observation: BotObservation, card: Card): number {
+function knownVoidOpponents(observation: BotObservation, suit: Suit): number {
+  const voidSeats = new Set<number>();
+  for (const trick of observation.completedTricks) {
+    if (!trick.length || trick[0].card.suit !== suit) continue;
+    for (const played of trick.slice(1)) {
+      if (played.seat !== observation.seat && played.card.suit !== suit) voidSeats.add(played.seat);
+    }
+  }
+  return voidSeats.size;
+}
+function evaluatePlay(observation: BotObservation, card: Card, difficulty: 'easy' | 'normal' | 'hard'): number {
   const trick = observation.currentTrick;
   const trump = observation.trump!;
   const isBidder = observation.seat === observation.bidder;
@@ -74,11 +86,14 @@ function evaluatePlay(observation: BotObservation, card: Card): number {
   const power = rankPower(card);
   const futureValue = (higher === 0 ? 4.7 : higher === 1 ? 2.8 : higher === 2 ? 1.0 : 0) + (isTrump ? 1.8 : 0);
   if (!trick.length) {
+    // Zor bot herkesçe görülen geçmişten kesin renk boşluklarını çıkarır.
+    const ruffRisk = difficulty === 'hard' && !isTrump
+      ? knownVoidOpponents(observation, card.suit) * 3.2 : 0;
     // Gerçek hayatta olduğu gibi, elde kalan tepe kartlar ve renk uzunluğu önemlidir.
     const bidBonus = wantsWin ? 2.0 : 0;
-    if (higher === 0 && power >= 9) return 12 + bidBonus + suitCount * 0.08 + (isTrump ? 0.3 : 0);
-    if (wantsWin) return 1.5 + power * 0.35 - higher * 0.9 + (isTrump ? 0.75 : 0);
-    return 5.8 - power * 0.34 - futureValue * 0.30 + suitCount * 0.04;
+    if (higher === 0 && power >= 9) return 12 + bidBonus + suitCount * 0.08 + (isTrump ? 0.3 : 0) - ruffRisk;
+    if (wantsWin) return 1.5 + power * 0.35 - higher * 0.9 + (isTrump ? 0.75 : 0) - ruffRisk;
+    return 5.8 - power * 0.34 - futureValue * 0.30 + suitCount * 0.04 - ruffRisk * 0.3;
   }
   const test = [...trick, { seat: observation.seat, card }];
   const winningNow = winningPlay(test, trump).seat === observation.seat;
@@ -94,7 +109,7 @@ function evaluatePlay(observation: BotObservation, card: Card): number {
 export function chooseCard(observation: BotObservation, difficulty: 'easy' | 'normal' | 'hard' = 'normal'): string {
   if (!observation.legalCards.length) throw Error('Botun oynayacağı yasal kart yok');
   if (observation.legalCards.length === 1) return observation.legalCards[0].id;
-  const scored = observation.legalCards.map(card => ({ card, score: evaluatePlay(observation, card) }))
+  const scored = observation.legalCards.map(card => ({ card, score: evaluatePlay(observation, card, difficulty) }))
     .sort((a, b) => b.score - a.score || a.card.id.localeCompare(b.card.id));
   if (difficulty === 'easy' && scored.length > 2) {
     // Kolay rakip rastgele yasadışı hamle yapmaz; sadece daha zayıf yasal alternatif seçer.
