@@ -112,7 +112,7 @@ function freshRound(
   };
 }
 export function newGame(randomIndex: RandomIndex, totalRounds = 5, rules = DEFAULT_RULES): Game {
-  if (!Number.isInteger(totalRounds) || totalRounds < 1 || totalRounds > 99) throw Error('Geçersiz maç uzunluğu');
+  if (!Number.isInteger(totalRounds) || totalRounds < 1 || totalRounds > 1000) throw Error('Geçersiz maç uzunluğu');
   if (rules.minBid < 1 || rules.minBid > 13 || rules.forceBid < 1 || rules.forceBid > 13)
     throw Error('Geçersiz masa kuralları');
   return freshRound(3, [0, 0, 0, 0], 1, totalRounds, rules, [], randomIndex);
