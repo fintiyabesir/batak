@@ -15,7 +15,7 @@ type Props = {
   onPress?: () => void;
 };
 const SIZES = {
-  hand: [56, 91], played: [56, 83], small: [35, 51], showcase: [84, 128],
+  hand: [72, 112], played: [56, 83], small: [35, 51], showcase: [84, 128],
 } as const;
 function value(rank: number): string {
   if (rank === 14) return 'A';
@@ -38,7 +38,7 @@ export default function CardView({
       styles.shell, { width, height, borderRadius: small ? 5 : 9 },
       back ? styles.back : styles.face,
       selected && { borderColor: palette.gold, borderWidth: 2.5, transform: [{ translateY: -12 }] },
-      disabled && { opacity: 0.42 },
+      // Yasal olmayan kartlar dahi net okunmalı; dokunma engeli ayrı yönetilir.
     ]}>
       {back ? (
         <View style={[styles.backInner, { borderRadius: small ? 2 : 5 }]}>
@@ -50,11 +50,11 @@ export default function CardView({
       ) : (
         <>
           <View style={styles.topPip}>
-            <Text allowFontScaling={false} style={[styles.rank, { color: ink, fontSize: small ? 13 : size === 'showcase' ? 24 : 18 }]}>{value(card!.rank)}</Text>
+            <Text allowFontScaling={false} style={[styles.rank, { color: ink, fontSize: small ? 13 : size === 'showcase' ? 24 : 21 }]}>{value(card!.rank)}</Text>
             <Text allowFontScaling={false} style={[styles.smallSuit, { color: ink, fontSize: small ? 12 : 16 }]}>{SUIT_MARK[card!.suit]}</Text>
           </View>
           <View style={[styles.centerStamp, { borderColor: red ? '#F1D6CD' : '#D9E6DE' }]}>
-            <Text allowFontScaling={false} style={{ color: ink, fontSize: small ? 19 : size === 'showcase' ? 54 : 33, lineHeight: small ? 24 : size === 'showcase' ? 66 : 42 }}>{SUIT_MARK[card!.suit]}</Text>
+            <Text allowFontScaling={false} style={{ color: ink, fontSize: small ? 19 : size === 'showcase' ? 54 : 39, lineHeight: small ? 24 : size === 'showcase' ? 66 : 49 }}>{SUIT_MARK[card!.suit]}</Text>
           </View>
           {!small && <Text allowFontScaling={false} style={[styles.bottomPip, { color: ink }]}>{value(card!.rank)}{SUIT_MARK[card!.suit]}</Text>}
         </>
