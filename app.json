@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Batak",
+    "slug": "batak",
+    "scheme": "batak",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#071D1C",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fintiya.batak"
+    },
+    "android": {
+      "package": "com.fintiya.batak",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [],
+    "extra": {
+      "offlineFirst": true
+    }
+  }
+}
