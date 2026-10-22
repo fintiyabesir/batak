@@ -19,4 +19,4 @@ export const SUIT_MARK: Record<string, string> = {
 export const SUIT_TR: Record<string, string> = {
   spades: 'Maça', hearts: 'Kupa', diamonds: 'Karo', clubs: 'Sinek',
 };
-export const PLAYER_NAMES = ['SEN', 'DENİZ', 'KUZey', 'BARAN'] as const;
+export const PLAYER_NAMES = ['SEN', 'DENİZ', 'KUZEY', 'BARAN'] as const;
