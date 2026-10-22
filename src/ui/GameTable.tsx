@@ -199,8 +199,8 @@ export default function GameTable({ game, onCard, onHome, onLastTrick, selection
 const styles = StyleSheet.create({
   frame: { flex: 1, paddingHorizontal: 11, paddingTop: 3, justifyContent: 'space-between' },
   tableArea: { flex: 1, position: 'relative', justifyContent: 'space-between' },
-  selectionVeil: { ...StyleSheet.absoluteFillObject, zIndex: 50, justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8 },
-  selectionShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(1, 16, 16, 0.82)', borderRadius: 18 },
+  selectionVeil: { ...StyleSheet.absoluteFill, zIndex: 50, justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8 },
+  selectionShade: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(1, 16, 16, 0.82)', borderRadius: 18 },
   selectionContent: { maxHeight: '100%', justifyContent: 'center' },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 60 },
   roundIcon: { width: 43, height: 43, borderRadius: 18, backgroundColor: palette.deep, borderColor: palette.border, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
